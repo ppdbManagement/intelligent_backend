@@ -6,6 +6,15 @@ __pycache__/
 # C extensions
 *.so
 
+venv/
+# 忽略迁移文件
+migrations/*
+*/migrations/*
+# 不忽略特定的迁移文件
+!migrations/create_sequence.py
+!*/migrations/create_sequence.py
+!*/migrations/__init__.py
+
 # Distribution / packaging
 .Python
 build/
