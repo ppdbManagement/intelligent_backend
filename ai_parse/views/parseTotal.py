@@ -13,7 +13,8 @@ from config.backendSettings import MEDIA_ROOT
 from django.http import FileResponse, Http404
 from threading import Thread
 from ..utils.parse_tools import async_parse
-from ..utils.result_tools import get_doc_parse_result
+from ..utils.result_tools import *
+from ..utils.simple_tools import get_result_path_from_state_uuid
 
 
 
@@ -300,12 +301,45 @@ class GetParseResultView(View):
             status = DocumentParseStatus.objects.filter(uuid=uuid).first()
             if not status:
                 return make_get_error_response(message="Status not found")
+            if status.error_message is not None and status.error_message != "":
+                return make_get_error_response(message=status.error_message)
             # TODO: 根据不同的解析阶段返回不同的结果
             result_data = {}
             if status.status == "doc_parse":
                 result_data = get_doc_parse_result(status)
+            elif status.status == "metadata_extract":
+                result_data = get_metadata_extract_result(status)
+            elif status.status == "table_locate":
+                result_data = get_table_locate_result(status)
             
             return make_get_success_response(data={"result": result_data})
         except Exception as e:
             traceback.print_exc()
             return make_server_error_response(message=str(e))
+
+
+class GetParsedPictureView(View):
+    def get(self,request,uuid):
+        try:
+            pic = ExperimentTablePicture.objects.filter(uuid=uuid).first()
+            if not pic:
+                raise Http404("Picture not found")
+            # 获取图片的路径
+            image_path = pic.image_path
+            experimentTableResults = pic.table_result.experiment_table_results
+            documentParseResult = DocumentParseResult.objects.filter(experiment_table_result=experimentTableResults).first()
+            documentParseStatus = DocumentParseStatus.objects.filter(parse_result=documentParseResult).first()
+            # 获取路径
+            mineru_dir = get_result_path_from_state_uuid(str(documentParseStatus.uuid),"doc_parse")
+            result_subdir = os.listdir(mineru_dir)[0]
+            parse_result_dir = os.path.join(mineru_dir,result_subdir,"vlm")
+            image_ful_path = os.path.join(parse_result_dir,image_path)
+            return FileResponse(
+                open(image_ful_path, "rb"),
+                content_type="image/png"
+            )
+        except Exception as e:
+            traceback.print_exc()
+            return make_server_error_response(message=str(e))
+ 
+            

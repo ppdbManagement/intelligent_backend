@@ -23,4 +23,6 @@ urlpatterns = [
     path('start_parse_file/<str:uuid>',StartParseFileView.as_view(), name='start_parse_file'),
     
     path('get_parse_result/<str:uuid>',GetParseResultView.as_view(), name='get_parse_result'),
+    
+    path('get_parsed_picture/<str:uuid>',GetParsedPictureView.as_view(), name='get_parsed_picture'),
 ]
