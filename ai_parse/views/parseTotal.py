@@ -311,6 +311,10 @@ class GetParseResultView(View):
                 result_data = get_metadata_extract_result(status)
             elif status.status == "table_locate":
                 result_data = get_table_locate_result(status)
+            elif status.status == "table_reconstruct":
+                result_data = get_table_reconstruct_result(status)
+            elif status.status == "data_filling":
+                result_data = get_data_filling_result(status)
             
             return make_get_success_response(data={"result": result_data})
         except Exception as e:
