@@ -9,6 +9,10 @@ from .merge_paginated_tables import merge_paginated_tables
 from .find_related_segment import find_related_segment, integrate_related_segments, build_tag_content_map
 from .reconstruct_table import reconstruct_table
 from .fill_table_data import fill_table_data
+from .extract_context import extract_context_data
+from .cluster_table_data import cluster_table_data_util
+from .devide_dataset import devide_dataset_util
+
 
 # 获取一个doc的原始文件路径
 
@@ -28,7 +32,7 @@ def make_parse_dir(doc):
 
 
 def async_parse(doc, stage, prev):
-    # ["doc_parse","metadata_extract","table_locate","table_reconstruct","data_filling","header_split","data_layer_split","data_alignment","data_storage"]:
+    # ["doc_parse","metadata_extract","table_locate","table_reconstruct","data_filling","context_extract","header_split","data_layer_split","data_alignment","data_storage"]:
     # 先将doc的状态改为正在解析
     print(f"Starting {stage} for document ")
     doc.current_status = "Parsing"
@@ -49,12 +53,12 @@ def async_parse(doc, stage, prev):
     elif stage == "data_filling":
         # 进行数据填充
         data_filling(doc, prev)
-    elif stage == "header_split":
-        # 进行表头拆分
-        pass
+    elif stage == "context_extract":
+        # 进行上下文提取
+        context_extract(doc, prev)
     elif stage == "data_layer_split":
         # 进行数据层拆分
-        pass
+        data_layer_split(doc, prev)
     elif stage == "data_alignment":
         # 进行数据对齐
         pass
@@ -324,5 +328,68 @@ def data_filling(doc, prev):
         print(f"Error during data filling for document {doc.uuid}: {str(e)}")
         failEndParseStatus = DocumentParseStatus.objects.create(
             document=doc, status="data_filling", start_end_flag="end", previous_status=startParseStatus, error_message=str(e))
+        doc.current_status = "Failed"
+        doc.save()
+
+# 上下文提取
+def context_extract(doc, prev):
+    prev_status = DocumentParseStatus.objects.filter(uuid=prev).first()
+    startParseStatus = DocumentParseStatus.objects.create(
+        document=doc, status="context_extract", start_end_flag="start", previous_status=prev_status)
+    try:
+        context_data = extract_context_data(prev)
+        # 先把结果存储到一个文件里
+        path_dir, path_uid = make_parse_dir(doc)
+        result_path = os.path.join(path_dir, "context_data.json")
+        with open(result_path, "w", encoding="utf-8") as f:
+            json.dump(context_data, f, ensure_ascii=False, indent=4)
+        # 创建一个DocumentParseResult
+        docParseResult = DocumentParseResult.objects.create(
+            result_path=path_uid)
+        endParseStatus = DocumentParseStatus.objects.create(
+            document=doc, status="context_extract", start_end_flag="end", previous_status=startParseStatus, parse_result=docParseResult)
+        doc.current_status = "Stopping"
+        doc.save()
+        print(f"Context extraction completed successfully for document {doc}")
+    except Exception as e:
+        # 创建一个失败的status
+        print(
+            f"Error during context extraction for document {doc.uuid}: {str(e)}")
+        failEndParseStatus = DocumentParseStatus.objects.create(
+            document=doc, status="context_extract", start_end_flag="end", previous_status=startParseStatus, error_message=str(e))
+        doc.current_status = "Failed"
+        doc.save()
+        
+# 进行数据拆分
+def data_layer_split(doc, prev):
+    status = DocumentParseStatus.objects.filter(uuid=prev).first()
+    # 创建一个新的status
+    new_status = DocumentParseStatus.objects.create(
+        document=doc, status="data_layer_split", start_end_flag="start", previous_status=status)
+    try:
+        # 进行数据层拆分
+        clustered_table_data = cluster_table_data_util(prev)
+        # 先把结果存储到一个文件里
+        path_dir, path_uid = make_parse_dir(doc)
+        print(path_uid)
+        result_path = os.path.join(path_dir, "clustered_table_data.json")
+        with open(result_path, "w", encoding="utf-8") as f:
+            json.dump(clustered_table_data, f, ensure_ascii=False, indent=4)
+        devided_dataset = devide_dataset_util(clustered_table_data)
+        with open(os.path.join(path_dir, "devided_dataset.json"), "w", encoding="utf-8") as f:
+            json.dump(devided_dataset, f, ensure_ascii=False, indent=4)
+        # 创建一个DocumentParseResult
+        docParseResult = DocumentParseResult.objects.create(
+            result_path=path_uid)
+        endParseStatus = DocumentParseStatus.objects.create(
+            document=doc, status="data_layer_split", start_end_flag="end", previous_status=new_status, parse_result=docParseResult)
+        doc.current_status = "Stopping"
+        doc.save()
+        print(f"Data layer split completed successfully for document {doc}")
+            
+    except Exception as e:
+        # 创建一个失败的status
+        failEndParseStatus = DocumentParseStatus.objects.create(
+            document=doc, status="data_layer_split", start_end_flag="end", previous_status=new_status, error_message=str(e))
         doc.current_status = "Failed"
         doc.save()

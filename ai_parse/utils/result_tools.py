@@ -199,3 +199,50 @@ def get_data_filling_result(parse_status):
     res["fillings"] = fillings
 
     return res
+
+def get_context_extract_result(parse_status):
+    res = {}
+    # 直接读取存储的context_data
+    result_dir = get_result_path_from_state_uuid(str(parse_status.uuid), 'context_extract')
+    context_data_path = os.path.join(result_dir, 'context_data.json')
+    context_data = {}
+    with open(context_data_path, 'r', encoding='utf-8') as f:
+        context_data = json.load(f)
+    # 遍历一下context_data，如果里面有data这个key，去除
+    for item in context_data:
+        if 'data' in item:
+            del item['data']
+    res['context_data'] = context_data
+    return res
+
+def get_data_layer_split_result(parse_status):
+    res = {}
+    # 直接读取存储的split_data
+    result_dir = get_result_path_from_state_uuid(str(parse_status.uuid), 'data_layer_split')
+    split_data_path = os.path.join(result_dir, 'devided_dataset.json')
+    split_data = {}
+    with open(split_data_path, 'r', encoding='utf-8') as f:
+        split_data = json.load(f)
+    for item in split_data:
+        # 去除datasets字段，里面数据太大了
+        if "datasets" in item:
+            del item["datasets"]
+        if "related_experiment_setting_segments" in item:
+            del item["related_experiment_setting_segments"]
+        
+        table_uuid = item.get("table_uuid")
+        # 获得图片
+        singleFlatParseResult = SingleFlatParseResult.objects.filter(uuid = table_uuid).first()
+        singleExperimentTableResult = singleFlatParseResult.origin_table
+        experimentTablePictures = singleExperimentTableResult.pictures.all()
+        pictures = []
+        for picture in experimentTablePictures:
+            picture_info = {
+                "pic_id": picture.uuid,        # ✅ 保持一致
+                "pic_order": picture.image_order,
+            }
+            pictures.append(picture_info)
+        pictures.sort(key=lambda x: x["pic_order"])
+        item["pictures"] = pictures
+    res['split_data'] = split_data
+    return res

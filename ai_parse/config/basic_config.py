@@ -32,6 +32,7 @@ parse_state = {
     "table_locate": "表格定位与语境获取",
     "table_reconstruct": "表格重构",
     "data_filling": "数据填充",
+    "context_extract" :"语境信息抽取",
     "header_split": "表头层拆分",
     "data_layer_split": "数据层拆分",
     "data_alignment": "数据对齐",

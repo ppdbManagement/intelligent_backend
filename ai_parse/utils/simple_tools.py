@@ -46,6 +46,22 @@ def get_result_path_from_state_uuid(state_uuid:str,stage:str):
         
     return None
 
+# 从当前的state uuid回溯到某一个状态的status对象
+def get_status_object_from_state_uuid(state_uuid:str,stage:str):
+    # 获取当前的状态对象，一定存在
+    current_status = DocumentParseStatus.objects.filter(uuid=state_uuid).first()
+    if not current_status:
+        return None
+    # 回溯到指定阶段的状态对象
+    while current_status and not (current_status.status == stage and current_status.start_end_flag == "end"):
+        # print(f"回溯中，当前状态对象: {current_status}, 阶段: {current_status.status}, 结束标志: {current_status.start_end_flag}")
+        current_status = current_status.previous_status
+    # 如果找到了指定阶段的状态对象，返回该对象
+    if current_status:
+        return current_status
+        
+    return None
+
 def strip_code_fence(text: str) -> str:
     """
     去除 LLM 返回结果最外层的 ```、```json、```html 等 code fence

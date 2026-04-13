@@ -284,7 +284,7 @@ class StartParseFileView(View):
                 return make_get_error_response(message="File not found")
             rb_data = json.loads(request.body)
             stage = rb_data.get("stage", None)
-            if stage not in ["doc_parse","metadata_extract","table_locate","table_reconstruct","data_filling","header_split","data_layer_split","data_alignment","data_storage"]:
+            if stage not in ["doc_parse","metadata_extract","table_locate","table_reconstruct","data_filling","context_extract","header_split","data_layer_split","data_alignment","data_storage"]:
                 return make_get_error_response(message="Invalid stage")
             # 异步解析
             prevUuid = rb_data.get("prev", None)
@@ -315,6 +315,10 @@ class GetParseResultView(View):
                 result_data = get_table_reconstruct_result(status)
             elif status.status == "data_filling":
                 result_data = get_data_filling_result(status)
+            elif status.status == "context_extract":
+                result_data = get_context_extract_result(status)
+            elif status.status == "data_layer_split":
+                result_data = get_data_layer_split_result(status)
             
             return make_get_success_response(data={"result": result_data})
         except Exception as e:
