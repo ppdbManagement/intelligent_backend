@@ -89,7 +89,7 @@ def cluster_table_data_rows(context_extract_result):
             headers = table_part.get("header", [])
             header_index = -1
             for idx, header in enumerate(headers):
-                if header.get("name", "") == compounds_ref_header_name:
+                if header.get("header_name", "") == compounds_ref_header_name:
                     header_index = idx
                     break
             if header_index == -1:
@@ -160,13 +160,14 @@ def determine_cluster_compounds_definitions(context_extract_result):
         raw_compounds = table_part["compounds"]
         quantitative_experimental_configurations = table_part.get(
             "quantitative_experimental_configurations", {})
-        data_preview = table_part.get("data_preview", [])
+        data_preview = get_first_n_json_records(table_part.get("data", []), n=3)
         # 1. 先从header里面找
         prompt_1 = determine_compounds_from_headers_prompt.substitute(
             enhanced_table_headers=json.dumps(headers, ensure_ascii=False, indent=2),
             table_data_rows_preview=json.dumps(data_preview, ensure_ascii=False, indent=2),
             compounds_ref_header_name=compounds_ref_header_name
         )
+        # 打印prompt_1以便调试
         response_1 = llm_client.simple_chat(user_message=prompt_1)
         response_1_json = safe_json_loads(response_1)
         header_compounds_name = response_1_json.get("name", "").strip()
@@ -213,7 +214,7 @@ def determine_cluster_compounds_definitions(context_extract_result):
 determine_compounds_from_headers_prompt = Template("""
 You are an expert in scientific table header interpretation.
 
-Your task is to determine whether the table headers explicitly state
+Your task is to determine whether any table header explicitly states
 which chemical compounds participate in the experiment.
 
 ---
@@ -223,7 +224,7 @@ which chemical compounds participate in the experiment.
 1. enhanced_table_headers:
 $enhanced_table_headers
 
-2. table_data_rows_preview (for reference only, do NOT infer compounds from numbers):
+2. table_data_rows_preview (for reference only — DO NOT infer compounds from numbers):
 $table_data_rows_preview
 
 3. candidate_compounds_ref_header_name (may be empty):
@@ -234,15 +235,16 @@ $compounds_ref_header_name
 ### Definition (VERY IMPORTANT)
 
 A header explicitly defines participating compounds ONLY IF:
-- It directly names the compounds involved in the experiment
+- It directly and explicitly names the compounds involved in the experiment
   (e.g., "Carbon dioxide–methane mixture", "Binary system of A and B",
-   "Isobutane + Squalane system").
+   "Isobutane + Squalane system")
 
 The following do NOT count:
 - Composition / mole fraction / mass fraction / ratio
 - Single-compound fraction (e.g., "x_methane")
-- Indirect/statistical implication
-- Any inference from numerical values
+- Generic labels such as: "composition", "mixture", "sample", "system"
+- Abbreviations or unclear codes that do not explicitly list compounds
+- Any inference from data values
 
 ---
 
@@ -250,27 +252,38 @@ The following do NOT count:
 
 Step 1 — Validate candidate (if provided):
 - If `candidate_compounds_ref_header_name` is NOT empty:
-  - Check whether it EXISTS in the headers AND satisfies the definition above.
-  - If YES → select it.
-  - If NO → ignore it and continue to Step 2.
+  - Check whether it EXACTLY matches any `header_name` in enhanced_table_headers
+  - AND whether that header satisfies the definition above
+  - If YES → return that `header_name`
+  - If NO → ignore it and continue to Step 2
 
 Step 2 — Search all headers:
-- Examine all headers.
-- If ONE OR MORE headers explicitly define participating compounds:
-  - Select the MOST representative one.
+- Examine all headers carefully
+- Identify headers whose text (raw_header_name or description) explicitly lists compound names
+- If ONE OR MORE such headers exist:
+  - Select the MOST representative one
+  - Return its `header_name`
 
 Step 3 — Fallback:
-- If NONE qualify → return empty string.
+- If NONE qualify → return empty string
 
 ---
 
-### Output (JSON ONLY)
+### Output (STRICT FORMAT)
+
+Return ONLY valid JSON:
 
 {
-  "name": ""
+  "name": "<header_name or empty string>"
 }
 
-Return ONLY valid JSON. Do not include explanations.
+Rules:
+- The value of "name" MUST be a header_name from enhanced_table_headers
+- DO NOT return raw_header_name
+- DO NOT return descriptions
+- DO NOT explain your reasoning
+- DO NOT infer compounds
+
 """)
 
 extract_participating_compounds_config_prompt = Template("""

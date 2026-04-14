@@ -13,7 +13,6 @@ def get_doc_parse_result(parse_status):
     # 该目录下只会有一个文件夹，获取该文件夹的路径
     result_subdir = os.listdir(result_dir)[0]
     markdown_path = os.path.join(result_dir, result_subdir, 'vlm',result_subdir+'.md')
-    # print(f"markdown_path: {markdown_path}")
     if os.path.exists(markdown_path):
         with open(markdown_path, 'r', encoding='utf-8') as f:
             markdown_content = f.read()
@@ -92,7 +91,7 @@ def get_table_reconstruct_result(parse_status):
         origin_table = singleResult.origin_table
 
         table = {
-            "table_id": origin_table.uuid,
+            "table_id": singleResult.uuid,
             "caption": origin_table.caption,  # ✅ 和第一个页面一致
             "table_order": origin_table.table_order,
         }
@@ -152,13 +151,11 @@ def get_data_filling_result(parse_status):
             table_uuid = item['table_uuid']
             data = item['data']
             table_data_mapping[table_uuid] = data
-    
-    
     for singleResult in single_flat_parse_results:
         origin_table = singleResult.origin_table
 
         filling = {
-            "table_id": origin_table.uuid,
+            "table_id": singleResult.uuid,
             "caption": origin_table.caption,  # ✅ 和第一个页面一致
             "table_order": origin_table.table_order,
         }
@@ -208,10 +205,14 @@ def get_context_extract_result(parse_status):
     context_data = {}
     with open(context_data_path, 'r', encoding='utf-8') as f:
         context_data = json.load(f)
-    # 遍历一下context_data，如果里面有data这个key，去除
+    # 遍历一下context_data
     for item in context_data:
+        if 'data_preview' in item:
+            del item['data_preview']
+        data_preview = get_first_n_json_records(item.get('data', []), 3)
         if 'data' in item:
             del item['data']
+        item['data_preview'] = data_preview
     res['context_data'] = context_data
     return res
 

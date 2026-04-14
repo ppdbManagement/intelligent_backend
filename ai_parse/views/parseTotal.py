@@ -15,6 +15,7 @@ from threading import Thread
 from ..utils.parse_tools import async_parse
 from ..utils.result_tools import *
 from ..utils.simple_tools import get_result_path_from_state_uuid
+from ..utils.store_tools import *
 
 
 
@@ -254,7 +255,7 @@ class GetSingleFileParseStateView(View):
 
             latest_status = DocumentParseStatus.objects.filter(
                 document=doc
-            ).order_by("-update_time").first()
+            ).order_by("-create_time").first()
 
             if not latest_status:
                 return make_get_success_response(data={"status_result": []})
@@ -262,7 +263,7 @@ class GetSingleFileParseStateView(View):
             while latest_status:
                 status_result.append({
                     "status": latest_status.status,
-                    "update_time": latest_status.update_time,
+                    "create_time": latest_status.create_time,
                     "start_end_flag": latest_status.start_end_flag,
                     "uuid": str(latest_status.uuid),
                 })
@@ -326,6 +327,9 @@ class GetParseResultView(View):
             return make_server_error_response(message=str(e))
 
 
+
+
+
 class GetParsedPictureView(View):
     def get(self,request,uuid):
         try:
@@ -350,4 +354,32 @@ class GetParsedPictureView(View):
             traceback.print_exc()
             return make_server_error_response(message=str(e))
  
+ 
+class StoreParseResultView(View):
+    def post(self,request,uuid):
+        try:
+            status = DocumentParseStatus.objects.filter(uuid=uuid).first()
+            if not status:
+                return make_get_error_response(message="Status not found")
+            rb_data = json.loads(request.body)
+            if status.status == "doc_parse":
+                store_doc_parse_result(status, rb_data)
+            elif status.status == "metadata_extract":
+                store_metadata_extract_result(status, rb_data)
+            elif status.status == "table_locate":
+                store_table_locate_result(status, rb_data)
+            elif status.status == "table_reconstruct":
+                store_table_reconstruct_result(status, rb_data)
+            elif status.status == "data_filling":
+                store_data_filling_result(status, rb_data)
+            elif status.status == "context_extract":
+                store_context_extract_result(status, rb_data)
+            elif status.status == "data_layer_split":
+                store_data_layer_split_result(status, rb_data)
             
+            # 更新这个status的update_time
+            status.save()
+            return make_custom_success_response(message="Result stored successfully")
+        except Exception as e:
+            traceback.print_exc()
+            return make_server_error_response(message=str(e))

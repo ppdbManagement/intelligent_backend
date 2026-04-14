@@ -82,15 +82,19 @@ def enhance_table_header_component_relationships(clustered_data):
                 header_name = header.get("name", "")
                 if header_name in enhanced_header_name_to_info:
                     enhanced_info = enhanced_header_name_to_info[header_name]
-                    header["related_compounds"] = enhanced_info.get(
-                        "related_compounds", [])
+                    related_compounds = enhanced_info.get("related_compounds", [])
+                    # 过滤掉不在原始compounds列表中的相关化合物
+                    related_compounds = [c for c in related_compounds if c in compounds]
+                    header["related_compounds"] = related_compounds
                     header["condition"] = enhanced_info.get("condition", [])
             for configuration in configurations:
                 config_name = configuration.get("name", "")
                 if config_name in enhanced_configuration_name_to_info:
                     enhanced_info = enhanced_configuration_name_to_info[config_name]
-                    configuration["related_compounds"] = enhanced_info.get(
-                        "related_compounds", [])
+                    related_compounds = enhanced_info.get("related_compounds", [])
+                    # 过滤掉不在原始compounds列表中的相关化合物
+                    related_compounds = [c for c in related_compounds if c in compounds]
+                    configuration["related_compounds"] = related_compounds
                     configuration["condition"] = enhanced_info.get(
                         "condition", [])
     return clustered_data
@@ -244,6 +248,27 @@ $configurations
    - Only bind a compound when the value clearly refers to it.
    - If there are no explicit measurement conditions, `condition` = `[]`.
    - Do not infer additional compounds or conditions beyond what is explicitly provided.
+
+5. **Related Compounds Constraint (STRICT RULE)**
+
+   - The field `related_compounds` MUST be selected ONLY from the provided **Compounds list**.
+   - Treat the Compounds list as a CLOSED SET. No external compounds are allowed under any condition.
+
+   - Matching rules:
+     - Only exact string match is allowed.
+     - Do NOT use synonyms, abbreviations, chemical variants, or inferred entities.
+     - Do NOT extract compounds from the caption unless they appear EXACTLY in the Compounds list.
+
+   - Caption constraint:
+     - The caption is CONTEXT ONLY and must NOT be used as a source for introducing new compounds.
+
+   - If a compound mentioned in headers, captions, or configurations is NOT explicitly present in the Compounds list:
+     → It MUST be ignored completely.
+
+   - If no valid compounds from the Compounds list apply:
+     → Return an empty list `[]`.
+
+   - Under NO circumstances should new compounds be introduced into `related_compounds`, even if they appear in scientific context or captions.
 
 ---
 

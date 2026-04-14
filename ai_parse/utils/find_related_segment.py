@@ -194,22 +194,22 @@ def is_table_ref_in_text(ref_word: str, text: str) -> bool:
 
 
 def find_experiment_setting_paragraphs(
-    table_references: List[Dict[str, Any]],
-    text_with_tags: List[List[Dict[str, str]]],
-    window_before: int = 5,
-    window_after: int = 2
-) -> None:
-
+    table_references,
+    text_with_tags,
+    window_before=5,
+    window_after=2
+):
     flat = [p for seg in text_with_tags for p in seg]
     tag_to_index = {p["tag"]: i for i, p in enumerate(flat)}
 
+    # ========= 第一轮 =========
     for ref in table_references:
         candidate_tags = set()
         found_tags = ref.get("found_in_paragraphs", [])
 
-        # TODO:可选优化：只使用首次引用（更聚焦）
         if found_tags:
             found_tags = [found_tags[0]]
+
         for tag in found_tags:
             if tag not in tag_to_index:
                 continue
@@ -225,6 +225,52 @@ def find_experiment_setting_paragraphs(
             p for p in flat if p["tag"] in candidate_tags
         ]
 
+    # ========= 第二轮（带 window 扩展） =========
+    n = len(table_references)
+
+    for i, ref in enumerate(table_references):
+        if ref.get("candidate_experiment_setting_paragraphs"):
+            continue
+
+        # ---------- 找前 ----------
+        prev_tag = None
+        for j in range(i - 1, -1, -1):
+            prev_found = table_references[j].get("found_in_paragraphs", [])
+            if prev_found:
+                prev_tag = prev_found[0]
+                break
+
+        # ---------- 找后 ----------
+        next_tag = None
+        for j in range(i + 1, n):
+            next_found = table_references[j].get("found_in_paragraphs", [])
+            if next_found:
+                next_tag = next_found[0]
+                break
+
+        prev_idx = tag_to_index.get(prev_tag) if prev_tag else None
+        next_idx = tag_to_index.get(next_tag) if next_tag else None
+
+        # ---------- 三种情况（加 window） ----------
+
+        # ✅ 前后都有
+        if prev_idx is not None and next_idx is not None:
+            start = max(0, min(prev_idx, next_idx) - window_before)
+            end = min(len(flat), max(prev_idx, next_idx) + window_after + 1)
+            ref["candidate_experiment_setting_paragraphs"] = flat[start:end]
+
+        # ✅ 只有前
+        elif prev_idx is not None:
+            start = max(0, prev_idx - window_before)
+            ref["candidate_experiment_setting_paragraphs"] = flat[start:]
+
+        # ✅ 只有后
+        elif next_idx is not None:
+            end = min(len(flat), next_idx + window_after + 1)
+            ref["candidate_experiment_setting_paragraphs"] = flat[:end]
+
+        # ❌ 都没有 → 不处理
+        
 # =========================
 # LLM identification
 # =========================

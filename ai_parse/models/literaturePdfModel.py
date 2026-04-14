@@ -48,6 +48,7 @@ class DocumentParseStatus(models.Model):
     status = models.CharField(max_length=30)
     start_end_flag = models.CharField(max_length=10, default='start')  # start, end
     error_message = models.TextField(blank=True, null=True)
+    create_time = models.DateTimeField(auto_now_add=True)
     update_time = models.DateTimeField(auto_now=True)
     previous_status = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='next_status')
     # 当前状态的解析结果
