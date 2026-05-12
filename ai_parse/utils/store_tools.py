@@ -315,4 +315,65 @@ def store_data_layer_split_result(parse_status, rb_data):
         
         
         
-        
+def store_data_alignment_result(parse_status, rb_data):
+    result_dir = get_result_path_from_state_uuid(str(parse_status.uuid), "data_alignment")
+    print(f"Storing data alignment result to {result_dir}")
+    alignment_file_path = os.path.join(result_dir, 'alignment_data.json')
+    alignment_data = rb_data.get('alignment_results', [])
+    # 读取原有数据
+    if os.path.exists(alignment_file_path):
+        with open(alignment_file_path, 'r', encoding='utf-8') as f:
+            existing_data = json.load(f)
+    else:
+        existing_data = []
+    # 遍历地读取每一个数据，因为会是对应的
+    for origin_item,updated_item in zip(existing_data, alignment_data):
+        # 直接更新aligned_datasets字段
+        # 先更新experiment_phase_info
+        if 'experiment_phase_info' in origin_item and origin_item['experiment_phase_info'] != {}:
+            if "aligned_phase" in origin_item['experiment_phase_info'] and origin_item['experiment_phase_info']["aligned_phase"] != {}:
+                origin_item['experiment_phase_info']["aligned_phase"]["target_uuid"] = updated_item.get('experiment_phase_info', {}).get("target_uuid", "")
+        origin_final_datasets = origin_item.get('final_datasets', [])
+        updated_final_datasets = updated_item.get('final_datasets', [])
+        for origin_dataset, updated_dataset in zip(origin_final_datasets, updated_final_datasets):
+            # 更新aligned_compounds
+            origin_dataset['aligned_compounds'] = updated_dataset.get('aligned_compounds', {})
+            # 更新variable_headers
+            origin_variable_headers = origin_dataset.get('variable_headers', [])
+            updated_variable_headers = updated_dataset.get('variable_headers', [])
+            for origin_variable, updated_variable in zip(origin_variable_headers, updated_variable_headers):
+                if "aligned_unit" not in origin_variable:
+                    origin_variable['aligned_unit'] = {}
+                origin_variable["aligned_unit"]["target_uuid"] = updated_variable.get("unit_target_uuid", "")
+                origin_variable["aligned_unit"]["scale"] = updated_variable.get("unit_scale",1.0)
+                if "aligned_variable" not in origin_variable:
+                    origin_variable['aligned_variable'] = {}
+                origin_variable["aligned_variable"]["target_uuid"] = updated_variable.get("variable_target_uuid","")
+            # 更新property_headers
+            origin_property_headers = origin_dataset.get('property_headers', [])
+            updated_property_headers = updated_dataset.get('property_headers', [])
+            for origin_prop, updated_prop in zip(origin_property_headers, updated_property_headers):
+                if "aligned_unit" not in origin_prop:
+                    origin_prop['aligned_unit'] = {}
+                origin_prop["aligned_unit"]["target_uuid"] = updated_prop.get("unit_target_uuid", "")
+                origin_prop["aligned_unit"]["scale"] = updated_prop.get("unit_scale",1.0)
+                if "aligned_property" not in origin_prop:
+                    origin_prop['aligned_property'] = {}
+                origin_prop["aligned_property"]["target_uuid"] = updated_prop.get("property_target_uuid","")
+            # 更新configurations
+            origin_configurations = origin_dataset.get('configurations', [])
+            for origin_config, updated_config in zip(origin_configurations, updated_item.get('final_datasets', [])[0].get('configurations', [])):
+                if "target_value" in updated_config:
+                    origin_config["aligned_value"] = updated_config.get("target_value", "")
+                else:
+                    origin_config["aligned_value"] = origin_config.get("value", "")
+                if "aligned_unit" not in origin_config:
+                    origin_config['aligned_unit'] = {}
+                origin_config["aligned_unit"]["target_uuid"] = updated_config.get("unit_target_uuid", "")
+                if "aligned_variable" not in origin_config:
+                    origin_config['aligned_variable'] = {} 
+                origin_config["aligned_variable"]["target_uuid"] = updated_config.get("variable_target_uuid","")
+    # 将更新后的数据写回文件    
+    with open(alignment_file_path, 'w', encoding='utf-8') as f:
+        json.dump(existing_data, f, ensure_ascii=False, indent=2)
+    return None

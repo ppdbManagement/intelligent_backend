@@ -64,6 +64,7 @@ def replace_header_name_key(cluster_table_data):
     
     
 def cluster_table_data_rows(context_extract_result):
+    llm_client = ParateraQwenClient()
     clustered_data = []
     for table_part in context_extract_result:
         # 这些是这个table共有的信息
@@ -104,12 +105,22 @@ def cluster_table_data_rows(context_extract_result):
             for cluster in clustered_rows:
                 # 需要抽取出compound name，并且header和data rows需要移除这一列
                 compound_name = cluster[0][header_index]
+                # 这里的compound_name需要处理一下
+                postprocess_prompt = postprocess_compounds_prompt.substitute(
+                    raw_compounds=compound_name
+                )
+                postprocess_response = llm_client.simple_chat(
+                    user_message=postprocess_prompt,
+                )
+                postprocessed_result = safe_json_loads(postprocess_response)
+                compound_names = postprocessed_result.get("compounds", [])
+                
                 reduced_headers = extract_column_except_columns(
                     [headers], [header_index])[0]
                 reduced_data_rows = extract_column_except_columns(
                     cluster, [header_index])
                 dataset = {
-                    "compounds": [compound_name],
+                    "compounds": compound_names,
                     "headers": reduced_headers,
                     "data_rows": reduced_data_rows,
                     "configurations": quantitative_experimental_configurations
@@ -157,6 +168,7 @@ def determine_cluster_compounds_definitions(context_extract_result):
     for table_part in context_extract_result:
         headers = table_part["header"]
         compounds_ref_header_name = table_part["compounds_ref_header_name"]
+        
         raw_compounds = table_part["compounds"]
         quantitative_experimental_configurations = table_part.get(
             "quantitative_experimental_configurations", {})
@@ -214,75 +226,132 @@ def determine_cluster_compounds_definitions(context_extract_result):
 determine_compounds_from_headers_prompt = Template("""
 You are an expert in scientific table header interpretation.
 
-Your task is to determine whether any table header explicitly states
-which chemical compounds participate in the experiment.
+Your task is to determine whether any table header explicitly defines
+the chemical compounds that participate as experimental substances.
 
----
-
-### Inputs
+============================================================
+INPUT
+============================================================
 
 1. enhanced_table_headers:
 $enhanced_table_headers
 
-2. table_data_rows_preview (for reference only — DO NOT infer compounds from numbers):
+2. table_data_rows_preview (FOR CONTEXT ONLY, DO NOT infer compounds):
 $table_data_rows_preview
 
-3. candidate_compounds_ref_header_name (may be empty):
+3. candidate_compounds_ref_header_name (may be empty, DO NOT trust blindly):
 $compounds_ref_header_name
 
----
+============================================================
+CRITICAL CONCEPT: ROLE-BASED INTERPRETATION
+============================================================
 
-### Definition (VERY IMPORTANT)
+You MUST classify headers by semantic ROLE, not by string content.
 
-A header explicitly defines participating compounds ONLY IF:
-- It directly and explicitly names the compounds involved in the experiment
-  (e.g., "Carbon dioxide–methane mixture", "Binary system of A and B",
-   "Isobutane + Squalane system")
+There are TWO fundamentally different roles:
 
-The following do NOT count:
-- Composition / mole fraction / mass fraction / ratio
-- Single-compound fraction (e.g., "x_methane")
-- Generic labels such as: "composition", "mixture", "sample", "system"
-- Abbreviations or unclear codes that do not explicitly list compounds
-- Any inference from data values
+### (A) COMPOUND-IDENTITY ROLE (VALID)
+A header is valid ONLY IF:
+- It directly represents the substance/system being studied
+- It defines the experimental chemical species themselves
+- It does NOT describe any physical/thermodynamic property
 
----
+Valid examples:
+- "compound"
+- "species"
+- "working fluid"
+- "binary system"
+- "CO2–CH4 system"
 
-### Decision Strategy
+### (B) PROPERTY / MEASUREMENT ROLE (INVALID)
+These headers are ALWAYS INVALID for compound extraction,
+even if they contain chemical names inside the string.
+
+STRICTLY EXCLUDE headers describing:
+- thermal conductivity
+- viscosity
+- density
+- diffusivity
+- pressure
+- temperature
+- heat capacity
+- any physical/thermodynamic property
+
+IMPORTANT:
+If a chemical name appears inside a property header,
+it MUST be ignored completely.
+
+Example:
+thermal_conductivity_[HMIM][BF4]
+→ INVALID (this is a property column, NOT a compound definition)
+
+============================================================
+DECISION RULES (HARD PRIORITY ORDER)
+============================================================
 
 Step 1 — Validate candidate (if provided):
-- If `candidate_compounds_ref_header_name` is NOT empty:
-  - Check whether it EXACTLY matches any `header_name` in enhanced_table_headers
-  - AND whether that header satisfies the definition above
-  - If YES → return that `header_name`
-  - If NO → ignore it and continue to Step 2
+- The candidate is ONLY a hint.
+- DO NOT assume correctness.
+- It MUST pass ALL rules below to be accepted.
 
-Step 2 — Search all headers:
-- Examine all headers carefully
-- Identify headers whose text (raw_header_name or description) explicitly lists compound names
-- If ONE OR MORE such headers exist:
-  - Select the MOST representative one
-  - Return its `header_name`
+Step 2 — Check semantic role FIRST:
+For ANY header:
+- If it contains property/measurement keywords → REJECT immediately
+- DO NOT proceed to chemical name checking
 
-Step 3 — Fallback:
-- If NONE qualify → return empty string
+Step 3 — Only after passing Step 2:
+- Check if the header explicitly names experimental chemical substances
+- It must clearly define the system/compound identity
 
----
+Step 4 — Selection:
+- If multiple valid headers exist, choose the most representative one
+- If none exist, return empty string
 
-### Output (STRICT FORMAT)
+============================================================
+STRICT FORBIDDEN CASES
+============================================================
 
-Return ONLY valid JSON:
+DO NOT treat as compound headers:
+- thermal_conductivity_*
+- viscosity_*
+- density_*
+- pressure_*
+- temperature_*
+- diffusivity_*
+- any derived physical property column
+
+DO NOT extract compounds from:
+- composition fields
+- mole fraction fields
+- ratio/mixture fields
+- encoded chemical names inside property headers
+
+============================================================
+OUTPUT RULES (STRICT)
+============================================================
+
+Return ONLY JSON:
 
 {
   "name": "<header_name or empty string>"
 }
 
-Rules:
-- The value of "name" MUST be a header_name from enhanced_table_headers
-- DO NOT return raw_header_name
-- DO NOT return descriptions
-- DO NOT explain your reasoning
-- DO NOT infer compounds
+============================================================
+OUTPUT CONSTRAINTS
+============================================================
+
+- MUST return header_name ONLY (never raw_header_name)
+- MUST NOT return descriptions
+- MUST NOT infer from data values
+- MUST NOT extract chemicals from property columns
+- MUST rely only on explicit compound-definition headers
+
+============================================================
+FINAL REMINDER
+============================================================
+
+If uncertain, choose EMPTY STRING.
+It is better to miss than to incorrectly extract from property columns.
 
 """)
 
@@ -343,4 +412,100 @@ A configuration SHOULD NOT be selected IF:
 }
 
 Return ONLY valid JSON. Do not include explanations.
+""")
+
+postprocess_compounds_prompt = Template("""
+You are an expert in chemical name normalization.
+
+Your task is to clean and decompose raw compound strings into
+a standardized list of pure chemical substances.
+
+============================================================
+INPUT
+============================================================
+
+Raw compounds list:
+$raw_compounds
+
+============================================================
+TASK
+============================================================
+
+Convert all entries into a CLEAN list of chemical compounds.
+
+You must:
+1. Remove experimental annotations
+2. Split mixtures into individual components
+3. Normalize formatting without changing chemical identity
+4. Return only unique compounds
+
+============================================================
+CLEANING RULES
+============================================================
+
+### 1. Remove non-chemical annotations
+Strip:
+- Temperature (e.g., 293.15 K, 298 K)
+- Pressure
+- Phase/condition info
+- Index markers (e.g., (1), (2))
+- Any parentheses content that is not part of chemical name
+
+Example:
+"1,2-Dichloroethane (1) (293.15 K)"
+→ "1,2-Dichloroethane"
+
+---
+
+### 2. Split mixtures
+If compounds are connected by:
+- "+"
+- "and"
+- ","
+- "/"
+- "–" (when clearly used as separator)
+
+Split into individual compounds.
+
+Example:
+"1,2-Dichloroethane + Hexan-1-ol"
+→ ["1,2-Dichloroethane", "Hexan-1-ol"]
+
+---
+
+### 3. Preserve chemical names exactly
+Do NOT:
+- rename compounds
+- expand abbreviations
+- modify chemical notation
+
+---
+
+### 4. Remove duplicates
+Ensure final list is unique.
+
+---
+
+### 5. Invalid entries
+If an item cannot be reliably interpreted:
+- skip it (do NOT guess)
+
+============================================================
+OUTPUT FORMAT (STRICT)
+============================================================
+
+Return ONLY valid JSON:
+
+{
+  "compounds": [
+    "compound1",
+    "compound2"
+  ]
+}
+
+Rules:
+- No explanations
+- No extra fields
+- No nesting beyond "compounds"
+- "compounds" must be a flat list of strings
 """)

@@ -46,6 +46,15 @@ def extract_context_data(prev_uuid):
         enhanced_result_1 = safe_json_loads(response_1)
         compounds_ref_header_name = enhanced_result_1.get("compounds_ref_header_name", "")
         compounds = enhanced_result_1.get("compounds", [])
+        # 对compounds进行后处理，清洗和分解成纯化合物列表
+        postprocess_prompt = postprocess_compounds_prompt.substitute(
+            raw_compounds=json.dumps(compounds, ensure_ascii=False)
+        )
+        postprocess_response = llm_client.simple_chat(
+            user_message=postprocess_prompt,
+        )
+        postprocessed_result = safe_json_loads(postprocess_response)
+        compounds = postprocessed_result.get("compounds", [])
         # Step 2: Extract quantitative experimental configurations
         prompt_2 = user_prompt_for_quantitative_experimental_configurations.substitute(
             caption=caption,
@@ -100,43 +109,75 @@ TASK: Identify experimental compounds (TABLE-SCOPED)
 
 You must determine:
 
-1) Whether any table header explicitly specifies the chemical identity of the experimental components (i.e., what substances are used in the experiment).
+1) Whether any table header explicitly specifies the chemical identity of the experimental components
+   (i.e., a column whose primary role is to define the substance or material being studied).
 
 2) If such a header exists:
-   - Return its exact name as "compounds_ref_header_name"
+   - Return its **header_name (NOT raw_header_name)** as "compounds_ref_header_name"
 
 3) If NO such header exists:
    - Set "compounds_ref_header_name" to ""
    - Extract all experimental compounds from the caption, related text, or table data previews
 
-------------------------------------------------------------
-IMPORTANT RULES
-------------------------------------------------------------
+============================================================
+CRITICAL EXTRACTION RULES
+============================================================
 
-- Only consider headers that indicate chemical identity, such as:
-  "compound", "species", "component", "fluid", "solute", "glycol", etc.
+### 1. Valid compound headers MUST satisfy ALL conditions:
+- The column represents a substance/material identity
+- It is NOT a physical property or experimental condition
+- It is NOT derived from a measurement label
 
-- DO NOT treat the following as compound identifiers:
-  - temperature
-  - pressure
-  - density
-  - mole fraction
-  - mass fraction
-  - any experimental condition
+Valid examples:
+- compound
+- species
+- solvent
+- fluid
+- mixture component
 
-- Compounds must be listed as individual pure substances:
-  ✔ Correct: ["carbon dioxide", "methane"]
-  ✘ Incorrect: ["CO2-CH4 mixture (x=0.3)"]
+### 2. STRICTLY DO NOT treat these as compound headers:
+Even if they contain chemical names, they are INVALID:
+- thermal_conductivity_*
+- viscosity_*
+- density_*
+- pressure_*
+- temperature_*
+- diffusivity_*
+- any physical/thermodynamic property columns
 
-- Do NOT include composition, ratios, or conditions in compound names.
+👉 IMPORTANT:
+If a chemical name appears inside a property column header,
+DO NOT extract it as a compound source.
 
-- If mixtures are present, list each base component separately.
+Example:
+thermal_conductivity_[HMIM][BF4]
+→ INVALID as compound header (this is a property column)
+
+### 3. Compound extraction rules:
+- Compounds must be pure substances only
+- DO NOT include mixtures, ratios, or annotated forms
+
+✔ Correct:
+["carbon dioxide", "methane"]
+
+✘ Incorrect:
+["CO2-CH4 (x=0.3 mixture)"]
+
+- If mixtures appear, split into base components only
+
+============================================================
+OUTPUT RULES (VERY IMPORTANT)
+============================================================
+
+Return ONE JSON object ONLY.
+
+If compounds_ref_header_name is NOT empty:
+- It MUST be exactly the "header_name" field from input headers
+- NEVER use raw_header_name
 
 ============================================================
 FINAL OUTPUT FORMAT
 ============================================================
-
-Return ONE JSON object:
 
 {
   "compounds_ref_header_name": "",
@@ -144,6 +185,102 @@ Return ONE JSON object:
 }
 
 Return JSON ONLY. No explanations.
+""")
+
+postprocess_compounds_prompt = Template("""
+You are an expert in chemical name normalization.
+
+Your task is to clean and decompose raw compound strings into
+a standardized list of pure chemical substances.
+
+============================================================
+INPUT
+============================================================
+
+Raw compounds list:
+$raw_compounds
+
+============================================================
+TASK
+============================================================
+
+Convert all entries into a CLEAN list of chemical compounds.
+
+You must:
+1. Remove experimental annotations
+2. Split mixtures into individual components
+3. Normalize formatting without changing chemical identity
+4. Return only unique compounds
+
+============================================================
+CLEANING RULES
+============================================================
+
+### 1. Remove non-chemical annotations
+Strip:
+- Temperature (e.g., 293.15 K, 298 K)
+- Pressure
+- Phase/condition info
+- Index markers (e.g., (1), (2))
+- Any parentheses content that is not part of chemical name
+
+Example:
+"1,2-Dichloroethane (1) (293.15 K)"
+→ "1,2-Dichloroethane"
+
+---
+
+### 2. Split mixtures
+If compounds are connected by:
+- "+"
+- "and"
+- ","
+- "/"
+- "–" (when clearly used as separator)
+
+Split into individual compounds.
+
+Example:
+"1,2-Dichloroethane + Hexan-1-ol"
+→ ["1,2-Dichloroethane", "Hexan-1-ol"]
+
+---
+
+### 3. Preserve chemical names exactly
+Do NOT:
+- rename compounds
+- expand abbreviations
+- modify chemical notation
+
+---
+
+### 4. Remove duplicates
+Ensure final list is unique.
+
+---
+
+### 5. Invalid entries
+If an item cannot be reliably interpreted:
+- skip it (do NOT guess)
+
+============================================================
+OUTPUT FORMAT (STRICT)
+============================================================
+
+Return ONLY valid JSON:
+
+{
+  "compounds": [
+    "compound1",
+    "compound2"
+  ]
+}
+
+Rules:
+- No explanations
+- No extra fields
+- No nesting beyond "compounds"
+- "compounds" must be a flat list of strings
 """)
 
 user_prompt_for_quantitative_experimental_configurations = Template("""

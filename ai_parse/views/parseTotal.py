@@ -12,10 +12,11 @@ from ..serializers.parseTotalStatusSerializers import ParseTotalStatusListSerial
 from config.backendSettings import MEDIA_ROOT
 from django.http import FileResponse, Http404
 from threading import Thread
-from ..utils.parse_tools import async_parse
+from ..utils.parse_tools import async_parse,auto_parse_flow
 from ..utils.result_tools import *
 from ..utils.simple_tools import get_result_path_from_state_uuid
 from ..utils.store_tools import *
+from ..utils.data_storage import check_can_store_in_db
 
 
 
@@ -165,8 +166,8 @@ class UploadFilesView(View):
             # ----------------------------
             # 5️⃣ auto 模式触发异步任务（预留）
             # ----------------------------
-            # if mode == "auto":
-            #     self.trigger_async_task(created_docs)
+            if mode == "auto":
+                auto_parse_flow(created_docs)
             # 这里返回创建的文档UUID列表，前端可以根据这些UUID去查询状态或者其他信息
             uuid_list = [str(doc_uuid) for doc_uuid in created_docs]
             return make_get_success_response(data={"created_uuids": uuid_list}, message="Files uploaded successfully")
@@ -287,8 +288,22 @@ class StartParseFileView(View):
             stage = rb_data.get("stage", None)
             if stage not in ["doc_parse","metadata_extract","table_locate","table_reconstruct","data_filling","context_extract","header_split","data_layer_split","data_alignment","data_storage"]:
                 return make_get_error_response(message="Invalid stage")
+            # 如果是Parsing和Success状态，不能重复触发解析
+            if doc.current_status in ["Parsing", "Success"]:
+                return make_get_error_response(message="正在解析中或已解析成功，不能重复触发解析")
             # 异步解析
             prevUuid = rb_data.get("prev", None)
+            # 如果前一阶段失败了，不能触发下一阶段的解析
+            if prevUuid:
+                status_entity = DocumentParseStatus.objects.filter(uuid=prevUuid).first()
+                if not status_entity:
+                    return make_get_error_response(message="前一阶段状态不存在")
+                if status_entity.error_message is not None and status_entity.error_message != "":
+                    return make_get_error_response(message="前一阶段解析失败，不能触发下一阶段解析:"+status_entity.error_message)
+            if stage == "data_storage":
+                valid,msg = check_can_store_in_db(prevUuid)
+                if not valid:
+                    return make_get_error_response(message="请确保前一阶段对齐全部完成:"+msg)
             thread = Thread(target=async_parse, args=(doc, stage, prevUuid))
             thread.start()
             return make_custom_success_response(message="Parse started successfully")
@@ -320,6 +335,10 @@ class GetParseResultView(View):
                 result_data = get_context_extract_result(status)
             elif status.status == "data_layer_split":
                 result_data = get_data_layer_split_result(status)
+            elif status.status == "data_alignment":
+                result_data = get_data_alignment_result(status)
+            elif status.status == "data_storage":
+                result_data = get_data_storage_result(status)
             
             return make_get_success_response(data={"result": result_data})
         except Exception as e:
@@ -376,6 +395,8 @@ class StoreParseResultView(View):
                 store_context_extract_result(status, rb_data)
             elif status.status == "data_layer_split":
                 store_data_layer_split_result(status, rb_data)
+            elif status.status == "data_alignment":
+                store_data_alignment_result(status, rb_data)
             
             # 更新这个status的update_time
             status.save()

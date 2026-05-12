@@ -10,6 +10,7 @@ from config.backendSettings import SEED_ROOT
 from ai_parse.utils.ParateraQwenClient import ParateraQwenClient
 from string import Template
 
+
 prompt_for_unit_deal = Template("""
 你是一个“通用物理与工程单位系统清洗、标准化与补全引擎”。
 
@@ -261,13 +262,34 @@ def deal_unit():
 
 from ai_parse.utils.unit_alignment import unit_alignment
 def test_for_unit_alignment():
-    res = unit_alignment("千米")
+    res = unit_alignment("1")
     print(res)
 
+from ai_parse.utils.compound_alignment import align_compound
+def test_for_compound_alignment():
+    res = align_compound("858445-56-4")
+    print(res)
 
-
-
+from ai_parse.utils.property_variable_alignment import property_variable_alignment
+def test_for_property_variable_alignment():
+    data = {
+        "alignment_type":"variable",
+        "unit":"K",
+        "property_name":"Critical Temperature",
+        "property_description":"The critical temperature of a substance is the temperature above which it cannot exist as a liquid, regardless of the pressure applied. At this temperature, the substance's liquid and gas phases become indistinguishable, resulting in a single supercritical fluid phase. The critical temperature is a fundamental property of a substance and is crucial for understanding its phase behavior and thermodynamic properties."
+    }
+    print(property_variable_alignment(data))
+    
+from ai_parse.utils.phase_alignment import phase_alignment
+def test_for_phase_alignment():
+    res = phase_alignment({"phase_name":"liquid","phase_description":"A state of matter characterized by a fixed volume but no fixed shape, where particles are closely packed and can flow past each other."})
+    print(res)  
+    
+    
 if __name__ == "__main__":
     # deal_unit()
-    test_for_unit_alignment()
+    # test_for_unit_alignment()
+    # test_for_compound_alignment()
+    # test_for_property_variable_alignment()
+    # test_for_phase_alignment()
     pass

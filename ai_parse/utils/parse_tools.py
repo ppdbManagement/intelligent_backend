@@ -1,5 +1,6 @@
 import json
 import subprocess
+import threading
 
 from ..models import *
 from config.backendSettings import MEDIA_ROOT
@@ -12,6 +13,11 @@ from .fill_table_data import fill_table_data
 from .extract_context import extract_context_data
 from .cluster_table_data import cluster_table_data_util
 from .devide_dataset import devide_dataset_util
+from .data_alignment import data_alignment_util
+from .data_storage import data_storage_util,check_can_store_in_db
+from queue import Queue
+
+
 
 
 # 获取一个doc的原始文件路径
@@ -40,7 +46,7 @@ def async_parse(doc, stage, prev):
     if stage == "doc_parse":
         # 进行文档解析
         # 解析完成后，更新文档状态为解析完成
-        doc_parse(doc)
+        doc_parse(doc,None)
     elif stage == "metadata_extract":
         # 进行元数据提取
         metadata_extract(doc, prev)
@@ -61,14 +67,14 @@ def async_parse(doc, stage, prev):
         data_layer_split(doc, prev)
     elif stage == "data_alignment":
         # 进行数据对齐
-        pass
+        data_alignment(doc, prev)
     elif stage == "data_storage":
         # 进行数据存储
-        pass
+        data_storage(doc, prev)
 
 
 # 第一步：文档解析
-def doc_parse(doc):
+def doc_parse(doc,prev):
     # 进行文档解析的具体实现
     # 创建一个parse status
     startParseStatus = DocumentParseStatus.objects.create(
@@ -99,6 +105,7 @@ def doc_parse(doc):
         doc.current_status = "Stopping"
         doc.save()
         print(f"Document parsing completed successfully for document {doc}")
+        return True,endParseStatus
 
     except Exception as e:
         # 创建一个失败的status
@@ -106,6 +113,7 @@ def doc_parse(doc):
             document=doc, status="doc_parse", start_end_flag="end", previous_status=startParseStatus, error_message=str(e))
         doc.current_status = "Failed"
         doc.save()
+        return False,None
 
 
 # 第二步：元数据提取
@@ -143,12 +151,14 @@ def metadata_extract(doc, prev):
         doc.current_status = "Stopping"
         doc.save()
         print(f"Metadata extraction completed successfully for document {doc}")
+        return True,endParseStatus
     except Exception as e:
         # 创建一个失败的status
         failEndParseStatus = DocumentParseStatus.objects.create(
             document=doc, status="metadata_extract", start_end_flag="end", previous_status=startParseStatus, error_message=str(e))
         doc.current_status = "Failed"
         doc.save()
+        return False,None
 
 # 第三步：表格定位
 
@@ -230,6 +240,7 @@ def table_locate(doc, prev):
         doc.current_status = "Stopping"
         doc.save()
         print(f"Table locate completed successfully for document {doc}")
+        return True,endParseStatus
     except Exception as e:
         # 创建一个失败的status
         print(f"Error during table locate for document {doc.uuid}: {str(e)}")
@@ -237,6 +248,7 @@ def table_locate(doc, prev):
             document=doc, status="table_locate", start_end_flag="end", previous_status=startParseStatus, error_message=str(e))
         doc.current_status = "Failed"
         doc.save()
+        return False,None
 
 # 对表格进行重建
 
@@ -292,6 +304,7 @@ def table_reconstruct(doc, prev):
         doc.current_status = "Stopping"
         doc.save()
         print(f"Table reconstruct completed successfully for document {doc}")
+        return True,endParseStatus
     except Exception as e:
         # 创建一个失败的status
         print(
@@ -300,6 +313,7 @@ def table_reconstruct(doc, prev):
             document=doc, status="table_reconstruct", start_end_flag="end", previous_status=startParseStatus, error_message=str(e))
         doc.current_status = "Failed"
         doc.save()
+        return False,None
 
 # 数据填充
 
@@ -323,6 +337,7 @@ def data_filling(doc, prev):
         doc.current_status = "Stopping"
         doc.save()
         print(f"Data filling completed successfully for document {doc}")
+        return True,endParseStatus
     except Exception as e:
         # 创建一个失败的status
         print(f"Error during data filling for document {doc.uuid}: {str(e)}")
@@ -330,6 +345,7 @@ def data_filling(doc, prev):
             document=doc, status="data_filling", start_end_flag="end", previous_status=startParseStatus, error_message=str(e))
         doc.current_status = "Failed"
         doc.save()
+        return False,None
 
 # 上下文提取
 def context_extract(doc, prev):
@@ -351,6 +367,7 @@ def context_extract(doc, prev):
         doc.current_status = "Stopping"
         doc.save()
         print(f"Context extraction completed successfully for document {doc}")
+        return True,endParseStatus
     except Exception as e:
         # 创建一个失败的status
         print(
@@ -359,6 +376,7 @@ def context_extract(doc, prev):
             document=doc, status="context_extract", start_end_flag="end", previous_status=startParseStatus, error_message=str(e))
         doc.current_status = "Failed"
         doc.save()
+        return False,None
         
 # 进行数据拆分
 def data_layer_split(doc, prev):
@@ -386,6 +404,7 @@ def data_layer_split(doc, prev):
         doc.current_status = "Stopping"
         doc.save()
         print(f"Data layer split completed successfully for document {doc}")
+        return True,endParseStatus
             
     except Exception as e:
         # 创建一个失败的status
@@ -393,3 +412,189 @@ def data_layer_split(doc, prev):
             document=doc, status="data_layer_split", start_end_flag="end", previous_status=new_status, error_message=str(e))
         doc.current_status = "Failed"
         doc.save()
+        return False,None
+        
+def data_alignment(doc, prev):
+    status = DocumentParseStatus.objects.filter(uuid=prev).first()
+    # 创建一个新的status
+    new_status = DocumentParseStatus.objects.create(
+        document=doc, status="data_alignment", start_end_flag="start", previous_status=status)
+    try:
+        alignment_data = data_alignment_util(prev)
+        # 先把结果存储到一个文件里
+        path_dir, path_uid = make_parse_dir(doc)
+        result_path = os.path.join(path_dir, "alignment_data.json")
+        print(result_path)
+        with open(result_path, "w", encoding="utf-8") as f:
+            json.dump(alignment_data, f, ensure_ascii=False, indent=4)
+        # 创建一个DocumentParseResult
+        docParseResult = DocumentParseResult.objects.create(
+            result_path=path_uid)
+        endParseStatus = DocumentParseStatus.objects.create(
+            document=doc, status="data_alignment", start_end_flag="end", previous_status=new_status, parse_result=docParseResult)
+        doc.current_status = "Stopping"
+        doc.save()
+        return True,endParseStatus
+    except Exception as e:
+        # 创建一个失败的status
+        failEndParseStatus = DocumentParseStatus.objects.create(
+            document=doc, status="data_alignment", start_end_flag="end", previous_status=new_status, error_message=str(e))
+        doc.current_status = "Failed"
+        doc.save()
+        return False,None
+        
+def data_storage(doc, prev):
+    status = DocumentParseStatus.objects.filter(uuid=prev).first()
+    # 创建一个新的status
+    new_status = DocumentParseStatus.objects.create(
+        document=doc, status="data_storage", start_end_flag="start", previous_status=status)
+    try:
+        # 进行数据存储的具体实现
+        result = data_storage_util(prev)
+        path_dir, path_uid = make_parse_dir(doc)
+        result_path = os.path.join(path_dir, "storage_result.json")
+        with open(result_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=4)
+        # print(result_path)
+        # 创建一个DocumentParseResult
+        docParseResult = DocumentParseResult.objects.create(
+            result_path=path_uid)
+        endParseStatus = DocumentParseStatus.objects.create(
+            document=doc, status="data_storage", start_end_flag="end", previous_status=new_status, parse_result=docParseResult)
+        doc.current_status = "Success"
+        doc.save()
+        print(f"Data storage completed successfully for document {doc}")
+        return True,endParseStatus
+    except Exception as e:
+        # 创建一个失败的status
+        failEndParseStatus = DocumentParseStatus.objects.create(
+            document=doc, status="data_storage", start_end_flag="end", previous_status=new_status, error_message=str(e))
+        doc.current_status = "Failed"
+        doc.save()
+        return False,None
+
+STAGE_FLOW = {
+    "doc_parse": ("metadata_extract", doc_parse),
+    "metadata_extract": ("table_locate", metadata_extract),
+    "table_locate": ("table_reconstruct", table_locate),
+    "table_reconstruct": ("data_filling", table_reconstruct),
+    "data_filling": ("context_extract", data_filling),
+    "context_extract": ("data_layer_split", context_extract),
+    "data_layer_split": ("data_alignment", data_layer_split),
+    "data_alignment": ("data_storage", data_alignment),
+}
+
+
+        
+def auto_parse_flow(doc_uuid_list):
+    task_queue = Queue()
+    # 先把所有的转为Parsing
+    doc_entities = Document.objects.filter(uuid__in=doc_uuid_list)
+    for doc in doc_entities:
+        doc.current_status = "Parsing"
+        doc.save()
+
+    # 初始化任务
+    for doc_uuid in doc_uuid_list:
+        task_queue.put({
+            "doc_uuid": doc_uuid,
+            "stage": "doc_parse",
+            "prev": None
+        })
+
+    # 启动两个线程
+    for i in range(2):
+        t = threading.Thread(
+            target=worker,
+            args=(f"T{i}", task_queue),
+            daemon=True
+        )
+        t.start()
+
+    return task_queue
+    
+def worker(name, task_queue):
+    while True:
+        task = task_queue.get()   # ✅ 阻塞等待
+
+        try:
+
+            doc_uuid = task["doc_uuid"]
+            stage = task["stage"]
+            prev = task["prev"]
+
+            doc_entity = Document.objects.filter(uuid=doc_uuid).first()
+            if not doc_entity:
+                print(f"{name}: doc {doc_uuid} not found")
+                continue
+
+            doc_entity.current_status = "Parsing"
+            doc_entity.save()
+
+            print(f"{name} processing {doc_uuid} at {stage}")
+
+            next_task = process_stage(doc_entity, stage, prev)
+
+            if next_task:
+                task_queue.put(next_task)
+
+        except Exception as e:
+            print(f"{name} error: {e}")
+            if 'doc_entity' in locals() and doc_entity:
+                doc_entity.current_status = "Failed"
+                doc_entity.save()
+
+        finally:
+            task_queue.task_done()   # ✅ 必须
+            
+def process_stage(doc_entity, stage, prev):
+    doc_uuid = doc_entity.uuid
+
+    # ✅ 最后一阶段单独处理
+    if stage == "data_storage":
+        can_store, msg = check_can_store_in_db(prev)
+        if not can_store:
+            print(f"{doc_uuid} storage check failed: {msg}")
+            doc_entity.current_status = "Failed"
+            doc_entity.save()
+            return None
+
+        result, _ = data_storage(doc_entity, prev)
+
+        if result:
+            print(f"{doc_uuid} ✅ completed")
+            doc_entity.current_status = "Success"
+            doc_entity.save()
+        else:
+            print(f"{doc_uuid} ❌ failed at storage")
+            doc_entity.current_status = "Failed"
+            doc_entity.save()
+
+        return None
+
+    # ✅ 正常流程
+    if stage not in STAGE_FLOW:
+        print(f"{doc_uuid} unknown stage {stage}")
+        doc_entity.current_status = "Failed"
+        doc_entity.save()
+        return None
+
+    next_stage, func = STAGE_FLOW[stage]
+
+    result, new_prev = func(doc_entity, prev)
+
+    if not result:
+        print(f"{doc_uuid} ❌ failed at {stage}")
+        doc_entity.current_status = "Failed"
+        doc_entity.save()
+        return None
+    else:
+        # 状态改为Parsing中，等待下一阶段处理
+        doc_entity.current_status = "Parsing"
+        doc_entity.save()
+
+    return {
+        "doc_uuid": doc_uuid,
+        "stage": next_stage,
+        "prev": new_prev.uuid
+    }
