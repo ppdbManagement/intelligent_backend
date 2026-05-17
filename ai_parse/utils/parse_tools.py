@@ -200,13 +200,23 @@ def table_locate(doc, prev):
         for idx, table in enumerate(tables_with_related_segments):
             segments = table.get("related_experiment_setting_segments", [])
 
+            caption = table.get("table_caption", "")
+
+            tags_json = json.dumps(
+                [item.get("tag") for item in segments if "tag" in item],
+                ensure_ascii=False
+            )
+
+            # print(f"Table {idx} caption len: {len(caption)}")
+            # print(f"Table {idx} tags_json len: {len(tags_json)}")
+
+            # print(f"Table {idx} caption: {caption}")
+            # print(f"Table {idx} tags_json: {tags_json}")
+
             single = SingleExperimentTableResult(
-                caption=table.get("table_caption", ""),
+                caption=caption,
                 table_order=idx,
-                related_segment_tags=json.dumps(
-                    [item.get("tag") for item in segments if "tag" in item],
-                    ensure_ascii=False
-                ),
+                related_segment_tags=tags_json,
                 experiment_table_results=experiment_table_result
             )
 
@@ -424,7 +434,7 @@ def data_alignment(doc, prev):
         # 先把结果存储到一个文件里
         path_dir, path_uid = make_parse_dir(doc)
         result_path = os.path.join(path_dir, "alignment_data.json")
-        print(result_path)
+        # print(result_path)
         with open(result_path, "w", encoding="utf-8") as f:
             json.dump(alignment_data, f, ensure_ascii=False, indent=4)
         # 创建一个DocumentParseResult

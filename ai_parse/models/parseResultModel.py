@@ -29,7 +29,7 @@ class ExperimentTableResults(models.Model):
 class SingleExperimentTableResult(models.Model):
     uuid = models.UUIDField(
         primary_key=True, auto_created=True, default=uuid.uuid4, editable=False)
-    caption = models.CharField(max_length=500, null=True, blank=True)
+    caption = models.CharField(max_length=2000, null=True, blank=True)
     table_order = models.IntegerField(null=True, blank=True)
     related_segment_tags = models.CharField(max_length=500, null=True, blank=True)  # 存储相关语境标签
     related_segment_parse_result = models.TextField(null=True, blank=True)  # 存储相关语境解析结果
